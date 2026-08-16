@@ -1,16 +1,16 @@
 {
   "name": "codex-sol-planner",
-  "version": "0.1.0",
+  "version": "0.1.0+codex.20260816145416",
   "description": "Plan implementation work with GPT-5.6 Sol and execute approved plans with GPT-5.6 Luna.",
   "author": {
-    "name": "Local developer"
+    "name": "sppidy"
   },
   "skills": "./skills/",
   "interface": {
     "displayName": "Codex Sol Planner",
     "shortDescription": "Sol plans; Luna implements approved plans.",
     "longDescription": "Creates implementation plans with GPT-5.6 Sol at xhigh effort, then sends approved plans to GPT-5.6 Luna at max effort.",
-    "developerName": "Local developer",
+    "developerName": "sppidy",
     "category": "Productivity",
     "capabilities": [
       "Write"
