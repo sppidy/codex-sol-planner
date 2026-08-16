@@ -1,0 +1,7 @@
+interface:
+  display_name: "Sol Planner to Luna Implementer"
+  short_description: "Sol plans; Luna implements after approval."
+  default_prompt: "Use $sol-plan-implement to plan this change with Sol, ask for approval, and have Luna implement it."
+
+policy:
+  allow_implicit_invocation: true
