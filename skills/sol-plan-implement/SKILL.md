@@ -1,58 +1,57 @@
 ---
 name: sol-plan-implement
-description: Use when the user explicitly wants GPT-5.6 Sol to plan implementation work and GPT-5.6 Luna to implement the approved plan, including follow-up approval, revision, rejection, or repair turns for that workflow. Human approval is the default; automatic implementation requires unmistakable request-level opt-in.
+description: "Use for the Sol-plan/Luna-or-Terra-implement workflow, including approval, revision, rejection, and repair follow-ups. Human approval is default; auto-approval needs explicit request-level opt-in."
 ---
 
-# Sol Plans, Luna Implements
+# Sol Plans; Luna or Terra Implements
 
-Run a sequential two-agent workflow. Give Sol ownership of planning and Luna
-ownership of implementation. Coordinate both stages without editing the target
-workspace from the controller thread.
+Run one sequential workflow: Sol plans, the controller gates the exact plan,
+and one selected implementer writes and validates it.
 
-## Preserve These Invariants
+## Keep These Invariants
 
-- Human plan approval is the default.
-- Ambiguity means `AUTO_APPROVE = false`.
-- Let Sol inspect in-scope evidence, but never let Sol modify files or external
-  state.
-- Make Luna the sole workflow agent allowed to modify the target workspace.
-- Never substitute another model or lower either reasoning effort.
-- Normal Codex safety approvals still apply in every mode.
-- Preserve unrelated and user-owned changes.
-- Use isolated forks and explicit context packets; never rely on inherited chat
-  history.
+- Use Sol/xhigh for planning, Luna/max as the default implementer, and
+  Terra/xhigh only for an approved complexity route or explicit user override.
+- Keep Sol read-only. Let only the selected implementer edit source files.
+- Never run Luna and Terra concurrently or silently substitute a model.
+- Preserve normal Codex approvals, scope limits, dirty state, and user-owned
+  changes in every mode.
+- Spawn isolated agents with explicit context packets; do not rely on inherited
+  chat history.
+- Require final evidence. Progress text and agent success claims are not proof.
 
-## Determine the Workflow State
+## Establish State
 
-Determine whether the current turn starts a new request, approves a plan,
-revises a plan, rejects a plan, or repairs an implementation.
+Classify the turn as a new request, plan approval, plan revision, plan
+rejection, implementation repair, or blocked-workflow decision.
 
-For a new request, capture these values from the current thread:
+For a new request, capture:
 
-- `ORIGINAL_REQUEST`: the requested implementation outcome.
-- `TARGET_WORKSPACE`: the actual repository or working directory.
-- `CONSTRAINTS`: applicable user instructions, `AGENTS.md` rules, safety
-  boundaries, dirty-worktree facts, and required validation.
-- `RELEVANT_CONTEXT`: prior decisions and evidence needed to understand the
-  task.
+- `ORIGINAL_REQUEST`: requested implementation outcome.
+- `TARGET_WORKSPACE`: verified repository or working directory.
+- `CONSTRAINTS`: user and `AGENTS.md` rules, safety boundaries, dirty-state
+  facts, and required validation.
+- `RELEVANT_CONTEXT`: decisions and evidence needed for this task only.
+- `PLAN_ID`: `sol-` plus a UTC timestamp (`YYYYMMDDHHMMSS`). Keep it unchanged
+  for that plan and create a new one for every revision.
+- `AUTO_APPROVE`: false unless the current request unmistakably opts in.
+- `ROUTE_OVERRIDE`: `Luna`, `Terra`, or unset. Set it only for an explicit,
+  unambiguous request such as "use Luna" or "use Terra".
 
-Exclude secrets and irrelevant conversation text from every context packet.
+Exclude secrets and irrelevant conversation from context packets.
 
-Set `AUTO_APPROVE = true` only when the user unmistakably asks to approve the
-plan automatically or implement immediately after planning without a plan
-review pause. Treat phrases such as "auto-approve the plan", "implement
-automatically after planning", and "do not wait for plan approval" as opt-ins.
-Do not treat negated, quoted, hypothetical, or ambiguous mentions as opt-ins.
-Treat Codex CLI's `--approve-for-me` as a tool-approval setting, never as plan
-auto-approval.
+Treat "auto-approve the plan", "implement automatically after planning", and
+"do not wait for plan approval" as auto-approval opt-ins. Negated, quoted,
+hypothetical, and ambiguous text is not an opt-in. CLI `--approve-for-me`
+controls tool approvals, not this plan gate.
 
-For a follow-up approval, revision, or rejection, identify the exact current
-plan and saved Sol target from the thread. Never apply a response to an older or
-ambiguous plan.
+Bind follow-ups to the latest pending `PLAN_ID` and saved agent target. A plain
+"approve" may approve the only unambiguous pending plan. If multiple or stale
+plans could match, require the plan ID instead of guessing.
 
-## Run the Planning Stage
+## Ask Sol for the Plan
 
-For a new request, call `spawn_agent` with these exact settings:
+For a new request, call `spawn_agent` exactly as follows:
 
 ```toml
 task_name = "sol_planner"
@@ -61,51 +60,59 @@ model = "gpt-5.6-sol"
 reasoning_effort = "xhigh"
 ```
 
-Build the planner message from `ORIGINAL_REQUEST`, `TARGET_WORKSPACE`,
-`CONSTRAINTS`, and `RELEVANT_CONTEXT`. Instruct Sol to:
+Send `PLAN_ID`, `ORIGINAL_REQUEST`, `TARGET_WORKSPACE`, `CONSTRAINTS`,
+`RELEVANT_CONTEXT`, and `ROUTE_OVERRIDE`. Instruct Sol to:
 
-1. Work only as the planning stage.
-2. Inspect the real repository and relevant evidence before choosing steps.
-3. Avoid editing files, installing dependencies, committing, or performing
-   external writes.
-4. Return Markdown sections named `Objective`, `Repository Findings`,
-   `Assumptions`, `Files`, `Implementation Steps`, `Validation`, `Risks`, and
-   `Open Questions`.
-5. Make every step concrete enough for a separate implementation agent.
-6. Report material ambiguity instead of inventing a requirement.
+1. Inspect in-scope evidence without editing files, installing dependencies,
+   committing, or making external writes.
+2. Return these Markdown sections: `Plan ID`, `Objective`, `Success Criteria`,
+   `Repository Findings`, `Assumptions`, `Implementation Route`, `Files`,
+   `Implementation Steps`, `Validation`, `Approval-Sensitive Actions`, `Risks`,
+   and `Open Questions`.
+3. Label measurable success criteria `SC-1`, `SC-2`, and so on.
+4. Honor `ROUTE_OVERRIDE`. Otherwise choose Luna by default. Choose Terra only
+   when coherent implementation needs substantial cross-subsystem or
+   high-risk reasoning and cannot safely be expressed as sequential,
+   Luna-sized steps. File count or a claim that work is "complex" is not enough.
+5. Write the route as exactly `Luna — gpt-5.6-luna / max` or
+   `Terra — gpt-5.6-terra / xhigh`, followed by a short evidence-based reason.
+6. Provide concrete ordered steps and validation for a separate implementer.
+   Report material ambiguity instead of inventing requirements.
 
-Save the returned target identifier as the current Sol planner. Wait for its
-result with `wait_agent` using a long bounded wait. Never busy-poll. If a wait
-ends without a final result, call `list_agents` once to reconcile status and
-continue waiting only when Sol remains active.
+Save Sol's target. Wait with one long bounded `wait_agent` call. If it returns
+without a final result, use `list_agents` once to reconcile and continue only
+when Sol remains active; never busy-poll.
 
-Confirm that Sol returned an actionable plan with implementation and validation
-steps. If planning fails or a material open question remains, report it and do
-not start Luna.
+Reject a plan as non-actionable when its plan ID differs, its route is invalid,
+success criteria are not measurable, validation is missing, or a material open
+question remains. Report the issue and do not start an implementer.
 
-## Enforce the Approval Gate
+## Gate the Exact Plan
 
-When `AUTO_APPROVE = false`, present Sol's complete plan and end the turn with:
+When `AUTO_APPROVE = false`, present the complete plan and end the turn with
+these plain lines:
 
-> Approval required: approve this plan to send it to Luna, request revisions to
-> send feedback back to Sol, or reject it to stop.
+```text
+Plan ID: sol-<timestamp>
+Implementation route: Luna|Terra
+Approval required: approve this plan, request revisions, or reject it.
+```
 
-Do not spawn Luna before approval of the exact current plan.
+Do not spawn an implementer before approval of that exact current plan. A
+rejection stops without implementation edits.
 
-Stop without implementation edits when the user rejects the plan.
+For revisions, create a new `PLAN_ID` and call `followup_task` on the same Sol
+target with the ID and exact feedback. Require a complete revised plan, present
+it, and gate it again. Bypass the new gate only when the revision request itself
+unmistakably enables auto-approval.
 
-When the user requests changes, call `followup_task` to resume the same Sol
-planner with the exact feedback. Require a complete revised plan, never a patch
-or delta. Present the revised plan and apply the approval gate again. Bypass the
-new gate only when the revision request itself unmistakably sets
-`AUTO_APPROVE = true`.
+Proceed only after explicit approval of the current plan or request-level
+auto-approval. Approval covers the named implementation route but never bypasses
+ordinary safety confirmation.
 
-Proceed to implementation only when the user explicitly approves the current
-plan or the request unmistakably sets `AUTO_APPROVE = true`.
+## Run the Selected Implementer
 
-## Run the Implementation Stage
-
-Call `spawn_agent` with these exact settings:
+For a Luna route, call `spawn_agent` exactly as follows:
 
 ```toml
 task_name = "luna_implementer"
@@ -114,47 +121,59 @@ model = "gpt-5.6-luna"
 reasoning_effort = "max"
 ```
 
-Build Luna's message from `ORIGINAL_REQUEST`, `TARGET_WORKSPACE`, `CONSTRAINTS`,
-and the complete approved plan. Instruct Luna to:
+For a Terra route, call `spawn_agent` exactly as follows:
 
-1. Work as the sole implementation agent without delegating or spawning
-   writers.
-2. Inspect current state before editing and preserve unrelated changes.
-3. Implement only the approved scope and use apply-patch-style edits where
-   available.
-4. Run every relevant validation check that is safe and available.
-5. Preserve the goal and document any small adaptation required by repository
-   evidence. Stop for approval before material scope expansion.
-6. Return `Status`, `Changed Files`, `Validation`, `Plan Deviations`, and
-   `Blockers` sections with concrete evidence.
+```toml
+task_name = "terra_implementer"
+fork_turns = "none"
+model = "gpt-5.6-terra"
+reasoning_effort = "xhigh"
+```
 
-Save the returned target identifier as the current Luna implementer. Wait with
-the same long-wait and single-reconciliation policy used for Sol.
+Spawn exactly one of these agents. Send the complete approved plan plus
+`ORIGINAL_REQUEST`, `TARGET_WORKSPACE`, and `CONSTRAINTS`. Instruct the selected
+implementer to:
 
-## Repair Validation Failures
+1. Be the sole writer and do not delegate or spawn writers.
+2. Inspect current state, preserve unrelated changes, and implement only the
+   approved scope using patch-style edits when available.
+3. Run every safe, available validation check from the plan. Stop before
+   material scope expansion or approval-sensitive action not already approved.
+4. Return `Status`, `Changed Files`, `Success Criteria Evidence`, `Validation`,
+   `Plan Deviations`, and `Blockers`. Map every `SC-N` to concrete pass, fail, or
+   unverified evidence.
 
-Require Luna's final result and current validation evidence. Never infer
-completion from progress text.
+Save the implementer target. Use the same bounded wait and single-reconciliation
+policy as for Sol.
 
-When validation fails because of an in-scope implementation defect, call
-`followup_task` to resume the same Luna implementer with the exact command,
-failure output, and unchanged approved scope. Require Luna to repair the defect
-and rerun validation. Repeat with the same Luna target until validation passes
-or Luna is genuinely blocked.
+## Verify and Repair
 
-When Luna is blocked, report the blocker, edits already made, workspace state,
-validation already run, and the exact user decision or external change needed.
-Never silently start a replacement agent.
+After the implementer returns, independently inspect the workspace from the
+controller. Compare every success criterion with the reported evidence and
+actual diff or artifacts. Rerun approved local validation when safe; expected
+test/build byproducts are allowed, but the controller must not edit source.
+Never convert an unavailable external or live check into a pass.
+
+On an in-scope failure, call `followup_task` on the same implementer target with
+the failing command, exit status, bounded output, unmet `SC-N`, and unchanged
+approved scope. Require repair and validation rerun.
+
+Track a failure fingerprint (command, exit status, and normalized error) plus a
+workspace diff/status summary. If the same fingerprint recurs twice without a
+meaningful code or diagnostic change, stop the loop and report a no-progress
+blocker. Do not silently switch from Luna to Terra. A takeover requires a fresh
+Sol plan and approval of its new plan ID and route.
 
 ## Return the Outcome
 
-Lead with the outcome and include:
+Lead with the result and include these exact state lines:
 
-- whether the plan was human-approved or auto-approved;
-- the implemented scope and changed files;
-- validation commands and results;
-- justified deviations from Sol's plan;
-- anything that remains unverified or blocked.
+```text
+Plan ID: sol-<timestamp>
+Approval mode: human-approved|auto-approved
+Implementation route: Luna|Terra
+```
 
-Never describe an unrun live check as passing. Never claim a plugin, service,
-or application is installed merely because its source files exist.
+Then report changed files, evidence for every success criterion, validation
+commands and results, justified deviations, and anything blocked or unverified.
+Never call source presence an installation, or an unrun check a pass.
