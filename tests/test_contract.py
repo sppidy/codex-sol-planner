@@ -27,17 +27,31 @@ class ContractTests(unittest.TestCase):
         cls.manifest = json.loads(MANIFEST.read_text())
 
     def test_exact_model_routes_are_pinned(self) -> None:
-        for task, model, effort in (
-            ("sol_planner", "gpt-5.6-sol", "xhigh"),
-            ("luna_implementer", "gpt-5.6-luna", "max"),
-            ("terra_implementer", "gpt-5.6-terra", "xhigh"),
-        ):
-            pattern = (
-                rf'task_name = "{re.escape(task)}".*?'
-                rf'model = "{re.escape(model)}".*?'
-                rf'reasoning_effort = "{re.escape(effort)}"'
-            )
-            self.assertRegex(self.skill, re.compile(pattern, re.DOTALL))
+        rows = re.findall(
+            r"^\| (Planner|Luna implementer|Terra implementer) "
+            r"\| `([^`]+)` \| `([^`]+)` \| `([^`]+)` \|$",
+            self.skill,
+            re.MULTILINE,
+        )
+        self.assertEqual(
+            rows,
+            [
+                ("Planner", "sol_planner_<workflow_id>", "gpt-5.6-sol", "xhigh"),
+                (
+                    "Luna implementer",
+                    "luna_implementer_<workflow_id>",
+                    "gpt-5.6-luna",
+                    "max",
+                ),
+                (
+                    "Terra implementer",
+                    "terra_implementer_<workflow_id>",
+                    "gpt-5.6-terra",
+                    "xhigh",
+                ),
+            ],
+        )
+        self.assertNotRegex(self.skill, r'task_name\s*=\s*"(?:sol_planner|luna_implementer|terra_implementer)"')
 
     def test_plan_contract_names_decision_fields(self) -> None:
         for field in (
@@ -51,8 +65,16 @@ class ContractTests(unittest.TestCase):
 
     def test_repair_contract_prevents_silent_takeover_and_stalled_loops(self) -> None:
         self.assertIn("failure fingerprint", self.skill)
-        self.assertIn("recurs twice", self.skill)
-        self.assertIn("Do not silently switch from Luna to Terra", self.skill)
+        self.assertIn("observed twice total", self.skill)
+        self.assertRegex(
+            self.skill, re.compile(r"stop after\s+the first repair attempt")
+        )
+        self.assertIn("Repair attempts: <integer>", self.skill)
+        self.assertIn("No-progress: no|blocked", self.skill)
+        self.assertRegex(
+            self.skill,
+            re.compile(r"Do not silently\s+switch from Luna to Terra"),
+        )
         self.assertRegex(self.skill, re.compile(r"fresh\s+Sol plan"))
 
     def test_public_metadata_identifies_v02_and_sppidy(self) -> None:

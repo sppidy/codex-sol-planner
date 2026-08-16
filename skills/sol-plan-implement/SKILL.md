@@ -32,8 +32,12 @@ For a new request, capture:
 - `CONSTRAINTS`: user and `AGENTS.md` rules, safety boundaries, dirty-state
   facts, and required validation.
 - `RELEVANT_CONTEXT`: decisions and evidence needed for this task only.
-- `PLAN_ID`: `sol-` plus a UTC timestamp (`YYYYMMDDHHMMSS`). Keep it unchanged
-  for that plan and create a new one for every revision.
+- `WORKFLOW_ID`: a new UTC timestamp with microseconds (`YYYYMMDDHHMMSSffffff`)
+  for this request. Keep it unchanged through plan revisions and
+  implementation repair.
+- `PLAN_ID`: `sol-` plus a UTC timestamp with microseconds
+  (`YYYYMMDDHHMMSSffffff`). Keep it unchanged for that plan and create a new,
+  distinct one for every revision.
 - `AUTO_APPROVE`: false unless the current request unmistakably opts in.
 - `ROUTE_OVERRIDE`: `Luna`, `Terra`, or unset. Set it only for an explicit,
   unambiguous request such as "use Luna" or "use Terra".
@@ -49,16 +53,22 @@ Bind follow-ups to the latest pending `PLAN_ID` and saved agent target. A plain
 "approve" may approve the only unambiguous pending plan. If multiple or stale
 plans could match, require the plan ID instead of guessing.
 
+Use only these spawn routes. Replace `<workflow_id>` with `WORKFLOW_ID` before
+calling `spawn_agent`; the resulting task name must contain only lowercase
+letters, digits, and underscores. Always set `fork_turns = "none"`.
+
+| Role | Task name | Model | Reasoning effort |
+| --- | --- | --- | --- |
+| Planner | `sol_planner_<workflow_id>` | `gpt-5.6-sol` | `xhigh` |
+| Luna implementer | `luna_implementer_<workflow_id>` | `gpt-5.6-luna` | `max` |
+| Terra implementer | `terra_implementer_<workflow_id>` | `gpt-5.6-terra` | `xhigh` |
+
+Never reuse a task name from an earlier workflow in the same conversation.
+
 ## Ask Sol for the Plan
 
-For a new request, call `spawn_agent` exactly as follows:
-
-```toml
-task_name = "sol_planner"
-fork_turns = "none"
-model = "gpt-5.6-sol"
-reasoning_effort = "xhigh"
-```
+For a new request, call `spawn_agent` with the Planner row and the current
+`WORKFLOW_ID`.
 
 Send `PLAN_ID`, `ORIGINAL_REQUEST`, `TARGET_WORKSPACE`, `CONSTRAINTS`,
 `RELEVANT_CONTEXT`, and `ROUTE_OVERRIDE`. Instruct Sol to:
@@ -112,27 +122,9 @@ ordinary safety confirmation.
 
 ## Run the Selected Implementer
 
-For a Luna route, call `spawn_agent` exactly as follows:
-
-```toml
-task_name = "luna_implementer"
-fork_turns = "none"
-model = "gpt-5.6-luna"
-reasoning_effort = "max"
-```
-
-For a Terra route, call `spawn_agent` exactly as follows:
-
-```toml
-task_name = "terra_implementer"
-fork_turns = "none"
-model = "gpt-5.6-terra"
-reasoning_effort = "xhigh"
-```
-
-Spawn exactly one of these agents. Send the complete approved plan plus
-`ORIGINAL_REQUEST`, `TARGET_WORKSPACE`, and `CONSTRAINTS`. Instruct the selected
-implementer to:
+Call `spawn_agent` with the approved Luna or Terra row and the current
+`WORKFLOW_ID`. Spawn exactly one implementer. Send the complete approved plan
+plus `ORIGINAL_REQUEST`, `TARGET_WORKSPACE`, and `CONSTRAINTS`. Instruct it to:
 
 1. Be the sole writer and do not delegate or spawn writers.
 2. Inspect current state, preserve unrelated changes, and implement only the
@@ -159,10 +151,12 @@ the failing command, exit status, bounded output, unmet `SC-N`, and unchanged
 approved scope. Require repair and validation rerun.
 
 Track a failure fingerprint (command, exit status, and normalized error) plus a
-workspace diff/status summary. If the same fingerprint recurs twice without a
-meaningful code or diagnostic change, stop the loop and report a no-progress
-blocker. Do not silently switch from Luna to Terra. A takeover requires a fresh
-Sol plan and approval of its new plan ID and route.
+workspace diff/status summary and count controller-requested repair attempts.
+The controller must never repair source itself. If the same fingerprint is
+observed twice total without a meaningful code or diagnostic change, stop after
+the first repair attempt and report a no-progress blocker. Do not silently
+switch from Luna to Terra. A takeover requires a fresh Sol plan and approval of
+its new plan ID and route.
 
 ## Return the Outcome
 
@@ -172,6 +166,8 @@ Lead with the result and include these exact state lines:
 Plan ID: sol-<timestamp>
 Approval mode: human-approved|auto-approved
 Implementation route: Luna|Terra
+Repair attempts: <integer>
+No-progress: no|blocked
 ```
 
 Then report changed files, evidence for every success criterion, validation

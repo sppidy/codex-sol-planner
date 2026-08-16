@@ -1,6 +1,6 @@
 {
   "name": "codex-sol-planner",
-  "version": "0.2.0+codex.20260816152030",
+  "version": "0.2.0+codex.20260816161622",
   "description": "Plan with GPT-5.6 Sol and route approved implementation to GPT-5.6 Luna or Terra.",
   "author": {
     "name": "sppidy",

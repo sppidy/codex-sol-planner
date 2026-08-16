@@ -12,7 +12,8 @@
 Sol chooses the route before approval. Terra is not selected merely because a
 task has many files: Sol first tries to express it as sequential Luna-sized
 steps. You can override routing with `Use Luna` or `Use Terra`. Only the selected
-implementer writes to the workspace.
+implementer edits source files. Controller validation may create ordinary test
+or build byproducts.
 
 ## Use
 
@@ -46,5 +47,5 @@ external writes, credentials, purchases, or material scope expansion.
 
 ```bash
 python3 -m unittest -v tests/test_contract.py
-python3 tests/live_smoke.py plan-id luna-auto terra-route ambiguous-gate revision-rejection
+python3 tests/live_smoke.py plan-id luna-auto terra-route ambiguous-gate approval-reuse no-progress
 ```
